@@ -15,11 +15,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static be.bagofwords.util.Utils.noException;
+import static java.util.stream.Collectors.toList;
 
 /**
  * Created by koen on 12.11.16.
@@ -36,9 +37,9 @@ public class DatabaseService implements LifeCycleBean {
     @Override
     public void startBean() {
         pool = new ComboPooledDataSource();
+        String dbHost = context.getProperty("database_host", "localhost");
         String dbName = context.getProperty("database_name");
-        String dbHost = context.getProperty("database_host");
-        String dbType = context.getProperty("database_type");
+        String dbType = context.getProperty("database_type", "mysql");
         pool.setJdbcUrl("jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true");
         pool.setUser(context.getProperty("database_user"));
         pool.setPassword(context.getProperty("database_password"));
@@ -137,7 +138,37 @@ public class DatabaseService implements LifeCycleBean {
         }
     }
 
-    public void writeObjects(List<? extends Object> objects) {
+    public void updateObjectWithId(Object object) {
+        String table = getTable(object.getClass());
+        execute(connection -> {
+            String query = "update " + table + " set ";
+            List<Field> fields = getFields(object.getClass(), true).collect(toList());
+            Field idField = null;
+            List<Field> fieldsInOrder = new ArrayList<>();
+            for (Field field : fields) {
+                if (field.getName().equals("id")) {
+                    idField = field;
+                } else {
+                    query += escape(field.getName()) + "=? ";
+                    fieldsInOrder.add(field);
+                }
+            }
+            if (idField == null) {
+                throw new RuntimeException("Could not find id field for object " + object);
+            }
+            fieldsInOrder.add(idField);
+            query += "where id=?";
+            PreparedStatement statement = connection.prepareStatement(query);
+            writeObjectFields(statement, object, fieldsInOrder);
+            statement.executeBatch();
+        });
+    }
+
+    public void insertObject(Object object) {
+        insertObjects(Collections.singletonList(object));
+    }
+
+    public void insertObjects(List<? extends Object> objects) {
         if (objects.isEmpty()) {
             return;
         }
@@ -151,8 +182,8 @@ public class DatabaseService implements LifeCycleBean {
         execute(connection -> {
             String query = "insert into " + table;
             List<String> fields = getFieldNames(objectClass, false);
-            query += " (" + String.join(",", fields.stream().map(name -> "`" + name + "`").collect(Collectors.toList())) + ")";
-            query += " values (" + String.join(",", fields.stream().map(name -> "?").collect(Collectors.toList())) + ")";
+            query += " (" + getFieldsString(fields) + ")";
+            query += " values (" + String.join(",", fields.stream().map(name -> "?").collect(toList())) + ")";
             PreparedStatement statement = connection.prepareStatement(query);
             for (int i = 0; i < objects.size(); i++) {
                 writeObjectFields(statement, objects.get(i));
@@ -165,9 +196,32 @@ public class DatabaseService implements LifeCycleBean {
         });
     }
 
+    public void deleteObjectsWhere(Class _class, String clause, Object... args) {
+        String table = getTable(_class);
+        String query = "DELETE FROM " + escape(table);
+        if (clause != null) {
+            query += " " + clause;
+        }
+        String finalQuery = query;
+        execute(connection -> {
+            PreparedStatement statement = connection.prepareStatement(finalQuery);
+            databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
+            statement.execute();
+            statement.close();
+        });
+    }
+
+    public void deleteObjects(Class _class) {
+        deleteObjectsWhere(_class, null);
+    }
+
+    private String getFieldsString(List<String> fields) {
+        return String.join(",", fields.stream().map(this::escape).collect(toList()));
+    }
+
     public <T> List<T> readObjectsWhere(Class _class, String clause, Object... args) {
         String table = getTable(_class);
-        String query = "SELECT " + getFieldsString(_class, true) + " FROM " + table;
+        String query = "SELECT " + getFieldsString(_class, true) + " FROM " + escape(table);
         if (clause != null) {
             query += " " + clause;
         }
@@ -179,11 +233,20 @@ public class DatabaseService implements LifeCycleBean {
             ResultSet resultSet = statement.getResultSet();
             List<T> result = new ArrayList<>();
             while (resultSet.next()) {
-                List<Field> fields = getFields(_class, true).collect(Collectors.toList());
+                List<Field> fields = getFields(_class, true).collect(toList());
                 noException(() -> result.add(databaseTypeService.readObjectFields(resultSet, _class, fields)));
             }
+            statement.close();
             return result;
         });
+    }
+
+    private String escape(String name) {
+        return "`" + name + "`";
+    }
+
+    public <T> List<T> readObjects(Class _class) {
+        return readObjectsWhere(_class, null);
     }
 
     private String getTable(Class aClass) {
@@ -196,11 +259,11 @@ public class DatabaseService implements LifeCycleBean {
 
     public String getFieldsString(Class _class, boolean includeId) {
         List<String> fields = getFieldNames(_class, includeId);
-        return String.join(",", fields);
+        return getFieldsString(fields);
     }
 
     private List<String> getFieldNames(Class _class, boolean includeId) {
-        return getFields(_class, includeId).map(Field::getName).collect(Collectors.toList());
+        return getFields(_class, includeId).map(Field::getName).collect(toList());
     }
 
     public Stream<Field> getFields(Class _class, boolean includeId) {
@@ -208,8 +271,12 @@ public class DatabaseService implements LifeCycleBean {
         return Arrays.stream(fields).filter(field -> !field.getName().equals("id") || includeId);
     }
 
-    public void writeObjectFields(PreparedStatement statement, Object object) throws IllegalAccessException, SQLException {
-        List<Field> fields = getFields(object.getClass(), false).collect(Collectors.toList());
+    public int writeObjectFields(PreparedStatement statement, Object object) throws IllegalAccessException, SQLException {
+        List<Field> fields = getFields(object.getClass(), false).collect(toList());
+        return writeObjectFields(statement, object, fields);
+    }
+
+    private int writeObjectFields(PreparedStatement statement, Object object, List<Field> fields) throws IllegalAccessException, SQLException {
         Object[] values = new Object[fields.size()];
         Class[] types = new Class[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
@@ -217,7 +284,7 @@ public class DatabaseService implements LifeCycleBean {
             values[i] = field.get(object);
             types[i] = field.getType();
         }
-        databaseTypeService.writeFields(1, statement, values, types);
+        return databaseTypeService.writeFields(1, statement, values, types);
     }
 
     public interface DatabaseAction {

@@ -11,7 +11,7 @@ import java.util.List;
  */
 public class DatabaseTypeService {
 
-    public void writeFields(int startInd, PreparedStatement statement, Object[] values, Class[] types) throws SQLException {
+    public int writeFields(int startInd, PreparedStatement statement, Object[] values, Class[] types) throws SQLException {
         for (int i = 0; i < values.length; i++) {
             Object value = values[i];
             Class<?> type = types[i];
@@ -36,6 +36,7 @@ public class DatabaseTypeService {
                 throw new RuntimeException("Unknown type " + type);
             }
         }
+        return startInd + values.length;
     }
 
     public int getSQLType(Class<?> type) {

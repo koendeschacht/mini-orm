@@ -16,11 +16,12 @@ import static java.util.stream.Collectors.toList;
 /**
  * Created by koen on 19.02.17.
  */
-public class DBMigrationService implements LifeCycleBean {
+public class DatabaseMigrationService implements LifeCycleBean {
 
     private static final String MIGRATE_DB = "migration";
     private static final String INITIAL_VERSION = "00000000000";
-    private static Logger logger = LoggerFactory.getLogger(DBMigrationService.class);
+
+    private static Logger logger = LoggerFactory.getLogger(DatabaseMigrationService.class);
 
     @Inject
     private DatabaseService databaseService;
@@ -87,7 +88,7 @@ public class DBMigrationService implements LifeCycleBean {
         if (resultSet.first()) {
             return resultSet.getString(1);
         } else {
-            return null;
+            throw new IllegalStateException("The version table " + MIGRATE_DB + " does not contain a single row!");
         }
     }
 
@@ -97,10 +98,20 @@ public class DBMigrationService implements LifeCycleBean {
             //Table does not exist yet
             logger.info("Migration table does not exist yet, creating it...");
             connection.createStatement().execute("create table " + MIGRATE_DB + " ( `version` varchar(30) );");
-            PreparedStatement statement = connection.prepareStatement("insert into " + MIGRATE_DB + " (version) values ('" + INITIAL_VERSION + "')");
-            statement.execute();
+            insertInitialVersion(connection);
+        }
+        //Check that the version table contains at least one row
+        result.close();
+        result = connection.createStatement().executeQuery("select version from " + MIGRATE_DB + ";");
+        if (!result.first()) {
+            insertInitialVersion(connection);
         }
         result.close();
+    }
+
+    private void insertInitialVersion(Connection connection) throws SQLException {
+        PreparedStatement statement = connection.prepareStatement("insert into " + MIGRATE_DB + " (version) values ('" + INITIAL_VERSION + "')");
+        statement.execute();
     }
 
     private List<BaseMigration> collectMigrations() {
