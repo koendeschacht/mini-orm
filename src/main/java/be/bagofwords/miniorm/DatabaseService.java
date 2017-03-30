@@ -3,10 +3,13 @@ package be.bagofwords.miniorm;
 import be.bagofwords.minidepi.ApplicationContext;
 import be.bagofwords.minidepi.LifeCycleBean;
 import be.bagofwords.minidepi.annotations.Inject;
+import be.bagofwords.miniorm.data.ReadField;
 import be.bagofwords.ui.UI;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
+import org.apache.commons.lang3.StringUtils;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.Connection;
@@ -40,7 +43,12 @@ public class DatabaseService implements LifeCycleBean {
         String dbHost = context.getProperty("database_host", "localhost");
         String dbName = context.getProperty("database_name");
         String dbType = context.getProperty("database_type", "mysql");
-        pool.setJdbcUrl("jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true");
+        String extraArgs = context.getProperty("database_extra_args", null);
+        String jdbUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true";
+        if (StringUtils.isNotEmpty(extraArgs)) {
+            jdbUrl += "&" + extraArgs;
+        }
+        pool.setJdbcUrl(jdbUrl);
         pool.setUser(context.getProperty("database_user"));
         pool.setPassword(context.getProperty("database_password"));
         pool.setMaxPoolSize(20);
@@ -196,7 +204,7 @@ public class DatabaseService implements LifeCycleBean {
         });
     }
 
-    public void deleteObjectsWhere(Class _class, String clause, Object... args) {
+    public void deleteObjects(Class _class, String clause, Object... args) {
         String table = getTable(_class);
         String query = "DELETE FROM " + escape(table);
         if (clause != null) {
@@ -212,14 +220,14 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public void deleteObjects(Class _class) {
-        deleteObjectsWhere(_class, null);
+        deleteObjects(_class, null);
     }
 
     private String getFieldsString(List<String> fields) {
         return String.join(",", fields.stream().map(this::escape).collect(toList()));
     }
 
-    public <T> List<T> readObjectsWhere(Class _class, String clause, Object... args) {
+    public <T> List<T> readObjects(Class _class, String clause, Object... args) {
         String table = getTable(_class);
         String query = "SELECT " + getFieldsString(_class, true) + " FROM " + escape(table);
         if (clause != null) {
@@ -234,11 +242,38 @@ public class DatabaseService implements LifeCycleBean {
             List<T> result = new ArrayList<>();
             while (resultSet.next()) {
                 List<Field> fields = getFields(_class, true).collect(toList());
-                noException(() -> result.add(databaseTypeService.readObjectFields(resultSet, _class, fields)));
+                noException(() -> result.add(createObject(resultSet, _class, fields)));
             }
             statement.close();
             return result;
         });
+    }
+
+    private <T> T createObject(ResultSet resultSet, Class aClass, List<Field> fields) throws InvocationTargetException, NoSuchMethodException, InstantiationException, SQLException, IllegalAccessException {
+        List<ReadField> fieldValues = databaseTypeService.readObjectFields(resultSet, fields);
+        //Does the object have a constructor with correct argument types?
+        Class[] fieldTypes = new Class[fieldValues.size()];
+        Object[] values = new Object[fieldValues.size()];
+        for (int i = 0; i < fieldValues.size(); i++) {
+            fieldTypes[i] = fieldValues.get(i).type;
+            values[i] = fieldValues.get(i).value;
+        }
+        try {
+            Constructor constructor = aClass.getConstructor(fieldTypes);
+            return (T) constructor.newInstance(values);
+        } catch (NoSuchMethodException exp) {
+            //OK
+        }
+        try {
+            Constructor constructor = aClass.getConstructor();
+            T instance = (T) constructor.newInstance();
+            for (int i = 0; i < fields.size(); i++) {
+                fields.get(i).set(instance, values[i]);
+            }
+            return instance;
+        } catch (NoSuchMethodException exp) {
+            throw new RuntimeException("Could not construct instance of type " + aClass + ", need a constructor without arguments, or a constructor with all arguments of same type and order as the fields");
+        }
     }
 
     private String escape(String name) {
@@ -246,7 +281,7 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public <T> List<T> readObjects(Class _class) {
-        return readObjectsWhere(_class, null);
+        return readObjects(_class, null);
     }
 
     private String getTable(Class aClass) {

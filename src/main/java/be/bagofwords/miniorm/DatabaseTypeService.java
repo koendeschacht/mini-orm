@@ -1,8 +1,11 @@
 package be.bagofwords.miniorm;
 
+import be.bagofwords.miniorm.data.ReadField;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.*;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -57,29 +60,31 @@ public class DatabaseTypeService {
         }
     }
 
-    public <T> T readObjectFields(ResultSet resultSet, Class _class, List<Field> fields) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SQLException {
-        T object = (T) _class.getConstructor().newInstance();
+    public List<ReadField> readObjectFields(ResultSet resultSet, List<Field> fields) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SQLException {
+        List<ReadField> values = new ArrayList<>();
         for (int i = 0; i < fields.size(); i++) {
             Field field = fields.get(i);
             int ind = i + 1;
             Class<?> type = field.getType();
+            Object value;
             if (type.equals(Integer.class) || type.equals(int.class)) {
-                field.set(object, resultSet.getInt(ind));
+                value = resultSet.getInt(ind);
             } else if (type.equals(Long.class) || type.equals(long.class)) {
-                field.set(object, resultSet.getLong(ind));
+                value = resultSet.getLong(ind);
             } else if (type.equals(Boolean.class) || type.equals(boolean.class)) {
-                field.set(object, resultSet.getBoolean(ind));
+                value = resultSet.getBoolean(ind);
             } else if (type.equals(Double.class) || type.equals(double.class)) {
-                field.set(object, resultSet.getDouble(ind));
+                value = resultSet.getDouble(ind);
             } else if (type.equals(String.class)) {
-                field.set(object, resultSet.getString(ind));
+                value = resultSet.getString(ind);
             } else if (type.equals(Date.class)) {
-                field.set(object, new Date(resultSet.getTimestamp(ind).getTime()));
+                value = new Date(resultSet.getTimestamp(ind).getTime());
             } else {
                 throw new RuntimeException("Unknown type " + type);
             }
+            values.add(new ReadField(value, type));
         }
-        return object;
+        return values;
     }
 
 }

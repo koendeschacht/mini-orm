@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>be.bagofwords</groupId>
+    <groupId>com.github.koendeschacht</groupId>
     <artifactId>mini-orm</artifactId>
-    <version>2017.1.0</version>
+    <version>master-SNAPSHOT</version>
 
     <properties>
         <slf4j-version>1.7.24</slf4j-version>
@@ -38,7 +38,7 @@
         <dependency>
             <groupId>com.github.koendeschacht</groupId>
             <artifactId>mini-dep-i</artifactId>
-            <version>2017.1.1</version>
+            <version>master-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>com.mchange</groupId>
