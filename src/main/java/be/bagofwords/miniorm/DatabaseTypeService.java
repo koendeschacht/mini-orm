@@ -14,6 +14,13 @@ import java.util.List;
  */
 public class DatabaseTypeService {
 
+    public void writeField(Object object, Object value, String name) throws SQLException, NoSuchFieldException, IllegalAccessException {
+        Class<?> objClass = object.getClass();
+        Field field = objClass.getField(name);
+        field.setAccessible(true);
+        field.set(object, value);
+    }
+
     public int writeFields(int startInd, PreparedStatement statement, Object[] values, Class[] types) throws SQLException {
         for (int i = 0; i < values.length; i++) {
             Object value = values[i];

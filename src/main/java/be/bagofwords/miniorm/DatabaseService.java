@@ -12,10 +12,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -30,6 +27,8 @@ import static java.util.stream.Collectors.toList;
  */
 public class DatabaseService implements LifeCycleBean {
 
+    private static final int INSERT_BATCH_SIZE = 100;
+
     @Inject
     private ApplicationContext context;
     @Inject
@@ -40,15 +39,17 @@ public class DatabaseService implements LifeCycleBean {
     @Override
     public void startBean() {
         pool = new ComboPooledDataSource();
-        String dbHost = context.getProperty("database_host", "localhost");
+        String defaultProperties = "mini-orm.properties";
+        String dbHost = context.getProperty("database_host", defaultProperties);
         String dbName = context.getProperty("database_name");
-        String dbType = context.getProperty("database_type", "mysql");
-        String extraArgs = context.getProperty("database_extra_args", null);
-        String jdbUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true";
+        String dbType = context.getProperty("database_type", defaultProperties);
+        String extraArgs = context.getProperty("database_extra_args", defaultProperties);
+        String jdbcUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true";
         if (StringUtils.isNotEmpty(extraArgs)) {
-            jdbUrl += "&" + extraArgs;
+            jdbcUrl += "&" + extraArgs;
         }
-        pool.setJdbcUrl(jdbUrl);
+        UI.write("Initiating database connection " + jdbcUrl);
+        pool.setJdbcUrl(jdbcUrl);
         pool.setUser(context.getProperty("database_user"));
         pool.setPassword(context.getProperty("database_password"));
         pool.setMaxPoolSize(20);
@@ -192,16 +193,64 @@ public class DatabaseService implements LifeCycleBean {
             List<String> fields = getFieldNames(objectClass, false);
             query += " (" + getFieldsString(fields) + ")";
             query += " values (" + String.join(",", fields.stream().map(name -> "?").collect(toList())) + ")";
-            PreparedStatement statement = connection.prepareStatement(query);
-            for (int i = 0; i < objects.size(); i++) {
-                writeObjectFields(statement, objects.get(i));
-                statement.addBatch();
-                if (i % 100 == 0) {
-                    statement.executeBatch();
-                }
+            boolean hasId;
+            try {
+                objectClass.getField("id");
+                hasId = true;
+            } catch (NoSuchFieldException exp) {
+                hasId = false;
             }
-            statement.executeBatch();
+            if (hasId) {
+                insertWithIds(objects, connection, query);
+            } else {
+                insertWithoutIds(objects, connection, query);
+            }
+
         });
+    }
+
+    private void insertWithoutIds(List<?> objects, Connection connection, String query) throws SQLException, IllegalAccessException {
+        PreparedStatement statement = connection.prepareStatement(query);
+        for (int i = 0; i < objects.size(); i++) {
+            writeObjectFields(statement, objects.get(i));
+            statement.addBatch();
+            if ((i - 1) % INSERT_BATCH_SIZE == 0) {
+                statement.executeBatch();
+            }
+        }
+        statement.executeBatch();
+    }
+
+    private void insertWithIds(List<?> objects, Connection connection, String query) throws SQLException, IllegalAccessException {
+        PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS);
+        int prevEnd = 0;
+        for (int i = 0; i < objects.size(); i++) {
+            writeObjectFields(statement, objects.get(i));
+            statement.addBatch();
+            if ((i - 1) % INSERT_BATCH_SIZE == 0) {
+                executeBatchAndReadKeys(statement, objects, prevEnd, i + 1);
+                prevEnd = i;
+            }
+        }
+        executeBatchAndReadKeys(statement, objects, prevEnd, objects.size());
+    }
+
+    private void executeBatchAndReadKeys(PreparedStatement statement, List<? extends Object> objects, int start, int end) throws SQLException {
+        statement.executeBatch();
+        ResultSet generatedKeys = statement.getGeneratedKeys();
+        int ind = start;
+        while (generatedKeys.next()) {
+            long id = generatedKeys.getLong(1);
+            try {
+                databaseTypeService.writeField(objects.get(ind), id, "id");
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new RuntimeException("Failed to set id of object " + objects.get(ind));
+            }
+            ind++;
+        }
+        if (ind != end) {
+            throw new RuntimeException("Did not retrieve enough keys after inserting objects");
+        }
     }
 
     public void deleteObjects(Class _class, String clause, Object... args) {
