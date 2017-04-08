@@ -40,18 +40,18 @@ public class DatabaseService implements LifeCycleBean {
     public void startBean() {
         pool = new ComboPooledDataSource();
         String defaultProperties = "mini-orm.properties";
-        String dbHost = context.getProperty("database_host", defaultProperties);
-        String dbName = context.getProperty("database_name");
-        String dbType = context.getProperty("database_type", defaultProperties);
-        String extraArgs = context.getProperty("database_extra_args", defaultProperties);
+        String dbHost = context.getProperty("database.host", defaultProperties);
+        String dbName = context.getProperty("database.name");
+        String dbType = context.getProperty("database.type", defaultProperties);
+        String extraArgs = context.getProperty("database.extra.args", defaultProperties);
         String jdbcUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true";
         if (StringUtils.isNotEmpty(extraArgs)) {
             jdbcUrl += "&" + extraArgs;
         }
         UI.write("Initiating database connection " + jdbcUrl);
         pool.setJdbcUrl(jdbcUrl);
-        pool.setUser(context.getProperty("database_user"));
-        pool.setPassword(context.getProperty("database_password"));
+        pool.setUser(context.getProperty("database.user"));
+        pool.setPassword(context.getProperty("database.password"));
         pool.setMaxPoolSize(20);
         pool.setMinPoolSize(5);
         pool.setInitialPoolSize(5);
