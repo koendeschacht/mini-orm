@@ -4,7 +4,7 @@ import be.bagofwords.minidepi.ApplicationContext;
 import be.bagofwords.minidepi.LifeCycleBean;
 import be.bagofwords.minidepi.annotations.Inject;
 import be.bagofwords.miniorm.data.ReadField;
-import be.bagofwords.ui.UI;
+import be.bagofwords.logging.Log;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
 import org.apache.commons.lang3.StringUtils;
 
@@ -48,7 +48,7 @@ public class DatabaseService implements LifeCycleBean {
         if (StringUtils.isNotEmpty(extraArgs)) {
             jdbcUrl += "&" + extraArgs;
         }
-        UI.write("Initiating database connection " + jdbcUrl);
+        Log.i("Initiating database connection " + jdbcUrl);
         pool.setJdbcUrl(jdbcUrl);
         pool.setUser(context.getProperty("database.user"));
         pool.setPassword(context.getProperty("database.password"));
@@ -105,7 +105,7 @@ public class DatabaseService implements LifeCycleBean {
                 try {
                     connection.rollback();
                 } catch (SQLException e) {
-                    UI.writeError("Failed to rollback database connection!", e);
+                    Log.e("Failed to rollback database connection!", e);
                 }
             }
             throw new RuntimeException(t);
@@ -114,7 +114,7 @@ public class DatabaseService implements LifeCycleBean {
                 try {
                     connection.close();
                 } catch (SQLException e) {
-                    UI.writeError("Failed to close database connection!", e);
+                    Log.e("Failed to close database connection!", e);
                 }
             }
         }
@@ -132,7 +132,7 @@ public class DatabaseService implements LifeCycleBean {
                 try {
                     connection.rollback();
                 } catch (SQLException e) {
-                    UI.writeError("Failed to rollback database connection!", e);
+                    Log.e("Failed to rollback database connection!", e);
                 }
             }
             throw new RuntimeException(t);
@@ -141,7 +141,7 @@ public class DatabaseService implements LifeCycleBean {
                 try {
                     connection.close();
                 } catch (SQLException e) {
-                    UI.writeError("Failed to close database connection!", e);
+                    Log.e("Failed to close database connection!", e);
                 }
             }
         }
@@ -187,6 +187,7 @@ public class DatabaseService implements LifeCycleBean {
                 throw new RuntimeException("Found two types of objects " + objectClass + " and " + object.getClass());
             }
         }
+        checkObjectClassHasCorrectId(objectClass);
         String table = getTable(objectClass);
         execute(connection -> {
             String query = "insert into " + table;
@@ -209,6 +210,17 @@ public class DatabaseService implements LifeCycleBean {
         });
     }
 
+    private void checkObjectClassHasCorrectId(Class objectClass) {
+        try {
+            Field idField = objectClass.getField("id");
+            if (!idField.getType().equals(Long.class) && !idField.getType().equals(long.class)) {
+                throw new RuntimeException("The id field of class " + objectClass + " is not of type Long or long");
+            }
+        } catch (NoSuchFieldException exp) {
+            //Ok
+        }
+    }
+
     private void insertWithoutIds(List<?> objects, Connection connection, String query) throws SQLException, IllegalAccessException {
         PreparedStatement statement = connection.prepareStatement(query);
         for (int i = 0; i < objects.size(); i++) {
@@ -225,12 +237,12 @@ public class DatabaseService implements LifeCycleBean {
         PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS);
         int prevEnd = 0;
         for (int i = 0; i < objects.size(); i++) {
-            writeObjectFields(statement, objects.get(i));
-            statement.addBatch();
-            if ((i - 1) % INSERT_BATCH_SIZE == 0) {
-                executeBatchAndReadKeys(statement, objects, prevEnd, i + 1);
+            if (i % INSERT_BATCH_SIZE == 0 && i > 0) {
+                executeBatchAndReadKeys(statement, objects, prevEnd, i);
                 prevEnd = i;
             }
+            writeObjectFields(statement, objects.get(i));
+            statement.addBatch();
         }
         executeBatchAndReadKeys(statement, objects, prevEnd, objects.size());
     }
@@ -249,7 +261,7 @@ public class DatabaseService implements LifeCycleBean {
             ind++;
         }
         if (ind != end) {
-            throw new RuntimeException("Did not retrieve enough keys after inserting objects");
+            throw new RuntimeException("Did not retrieve enough keys after inserting objects. Retrieved " + ind + ", needed " + end);
         }
     }
 

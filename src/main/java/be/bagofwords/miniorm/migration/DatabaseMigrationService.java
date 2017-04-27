@@ -1,11 +1,10 @@
 package be.bagofwords.miniorm.migration;
 
+import be.bagofwords.logging.Log;
 import be.bagofwords.minidepi.ApplicationContext;
 import be.bagofwords.minidepi.LifeCycleBean;
 import be.bagofwords.minidepi.annotations.Inject;
 import be.bagofwords.miniorm.DatabaseService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 import java.util.List;
@@ -21,8 +20,6 @@ public class DatabaseMigrationService implements LifeCycleBean {
     private static final String MIGRATE_DB = "migration";
     private static final String INITIAL_VERSION = "00000000000";
 
-    private static Logger logger = LoggerFactory.getLogger(DatabaseMigrationService.class);
-
     @Inject
     private DatabaseService databaseService;
     @Inject
@@ -32,7 +29,6 @@ public class DatabaseMigrationService implements LifeCycleBean {
 
     @Override
     public void startBean() {
-        applicationContext.waitUntilBeanStarted(databaseService);
         runMigrations();
     }
 
@@ -48,7 +44,7 @@ public class DatabaseMigrationService implements LifeCycleBean {
             String version = getVersion(connection);
             int ind = -1;
             if (!INITIAL_VERSION.equals(version)) {
-                logger.info("Current version of database migrations is " + version);
+                Log.i("Current version of database migrations is " + version);
                 for (int i = 0; i < migrations.size(); i++) {
                     if (Objects.equals(migrations.get(i).getId(), version)) {
                         ind = i;
@@ -58,20 +54,20 @@ public class DatabaseMigrationService implements LifeCycleBean {
                     throw new IllegalStateException("Version " + version + " could not be found in the list of migrations");
                 }
             } else {
-                logger.info("Starting from zero migrations");
+                Log.i("Starting from zero migrations");
             }
             int numOfMigrationsToExecute = migrations.size() - (ind + 1);
             if (numOfMigrationsToExecute > 0) {
-                logger.info("Executing " + numOfMigrationsToExecute + " migrations");
+                Log.i("Executing " + numOfMigrationsToExecute + " migrations");
                 for (int j = ind + 1; j < migrations.size(); j++) {
                     BaseMigration migration = migrations.get(j);
-                    logger.info("Executing migration " + migration.getId() + " \"" + migration.getDescription() + "\"");
+                    Log.i("Executing migration " + migration.getId() + " \"" + migration.getDescription() + "\"");
                     migration.execute(connection);
                     version = migration.getId();
                     updateVersion(version, connection);
                 }
             } else {
-                logger.info("Migrations up-to-date");
+                Log.i("Migrations up-to-date");
             }
         });
     }
@@ -96,7 +92,7 @@ public class DatabaseMigrationService implements LifeCycleBean {
         ResultSet result = connection.createStatement().executeQuery("show tables like '" + MIGRATE_DB + "';");
         if (!result.first()) {
             //Table does not exist yet
-            logger.info("Migration table does not exist yet, creating it...");
+            Log.i("Migration table does not exist yet, creating it...");
             connection.createStatement().execute("create table " + MIGRATE_DB + " ( `version` varchar(30) );");
             insertInitialVersion(connection);
         }
