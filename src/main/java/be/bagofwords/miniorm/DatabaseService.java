@@ -1,10 +1,11 @@
 package be.bagofwords.miniorm;
 
+import be.bagofwords.iterator.CloseableIterator;
+import be.bagofwords.logging.Log;
 import be.bagofwords.minidepi.ApplicationContext;
 import be.bagofwords.minidepi.LifeCycleBean;
 import be.bagofwords.minidepi.annotations.Inject;
 import be.bagofwords.miniorm.data.ReadField;
-import be.bagofwords.logging.Log;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
 import org.apache.commons.lang3.StringUtils;
 
@@ -13,10 +14,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static be.bagofwords.util.Utils.noException;
@@ -35,6 +33,8 @@ public class DatabaseService implements LifeCycleBean {
     private DatabaseTypeService databaseTypeService;
 
     private ComboPooledDataSource pool;
+
+    private Map<Class, InitializationMethod> cachedInitializationMethods = new HashMap<>();
 
     @Override
     public void startBean() {
@@ -121,11 +121,17 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public <T> T execute(DatabaseActionWithResult<T> action) {
+        return execute(action, false);
+    }
+
+    public <T> T execute(DatabaseActionWithResult<T> action, boolean keepOpen) {
         Connection connection = null;
         try {
             connection = getConnection();
             T result = action.execute(connection);
-            connection.commit();
+            if (!keepOpen) {
+                connection.commit();
+            }
             return result;
         } catch (Throwable t) {
             if (connection != null) {
@@ -137,7 +143,7 @@ public class DatabaseService implements LifeCycleBean {
             }
             throw new RuntimeException(t);
         } finally {
-            if (connection != null) {
+            if (connection != null && !keepOpen) {
                 try {
                     connection.close();
                 } catch (SQLException e) {
@@ -288,61 +294,98 @@ public class DatabaseService implements LifeCycleBean {
         return String.join(",", fields.stream().map(this::escape).collect(toList()));
     }
 
+    public <T> List<T> readObjects(Class _class) {
+        return readObjects(_class, null);
+    }
+
     public <T> List<T> readObjects(Class _class, String clause, Object... args) {
-        String table = getTable(_class);
-        String query = "SELECT " + getFieldsString(_class, true) + " FROM " + escape(table);
-        if (clause != null) {
-            query += " " + clause;
-        }
-        String finalQuery = query;
+        String query = buildQuery(_class, clause);
         return execute(connection -> {
-            PreparedStatement statement = connection.prepareStatement(finalQuery);
+            PreparedStatement statement = connection.prepareStatement(query);
             databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
             statement.execute();
+            List<Field> fields = getFields(_class, true).collect(toList());
             ResultSet resultSet = statement.getResultSet();
             List<T> result = new ArrayList<>();
             while (resultSet.next()) {
-                List<Field> fields = getFields(_class, true).collect(toList());
                 noException(() -> result.add(createObject(resultSet, _class, fields)));
             }
+            resultSet.close();
             statement.close();
             return result;
         });
     }
 
+    public <T> CloseableIterator<T> readObjectsIt(Class _class) {
+        return readObjectsIt(_class, null);
+    }
+
+    public <T> CloseableIterator<T> readObjectsIt(Class _class, String clause, Object... args) {
+        String finalQuery = buildQuery(_class, clause);
+        return execute(connection -> {
+            PreparedStatement statement = connection.prepareStatement(finalQuery, java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
+            statement.setFetchSize(Integer.MIN_VALUE);
+            databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
+            statement.execute();
+            ResultSet resultSet = statement.getResultSet();
+            List<Field> fields = getFields(_class, true).collect(toList());
+            return new CloseableIterator<T>() {
+                @Override
+                protected void closeInt() {
+                    noException(() -> {
+                        resultSet.close();
+                        statement.close();
+                        connection.close();
+                    });
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return noException(resultSet::next);
+                }
+
+                @Override
+                public T next() {
+                    return noException(() -> createObject(resultSet, _class, fields));
+                }
+            };
+        }, true);
+    }
+
     private <T> T createObject(ResultSet resultSet, Class aClass, List<Field> fields) throws InvocationTargetException, NoSuchMethodException, InstantiationException, SQLException, IllegalAccessException {
         List<ReadField> fieldValues = databaseTypeService.readObjectFields(resultSet, fields);
-        //Does the object have a constructor with correct argument types?
         Class[] fieldTypes = new Class[fieldValues.size()];
         Object[] values = new Object[fieldValues.size()];
         for (int i = 0; i < fieldValues.size(); i++) {
             fieldTypes[i] = fieldValues.get(i).type;
             values[i] = fieldValues.get(i).value;
         }
+        InitializationMethod<T> initializationMethod = getInitializationMethod(aClass, fields, fieldTypes);
+        return initializationMethod.createObject(values);
+    }
+
+    private <T> InitializationMethod<T> getInitializationMethod(Class aClass, List<Field> fields, Class[] fieldTypes) {
+        return cachedInitializationMethods.computeIfAbsent(aClass, c -> determineInitializationMethod(c, fields, fieldTypes));
+    }
+
+    private <T> InitializationMethod<T> determineInitializationMethod(Class<T> aClass, List<Field> fields, Class[] fieldTypes) {
         try {
+            //Do we have single constructor for all fields?
             Constructor constructor = aClass.getConstructor(fieldTypes);
-            return (T) constructor.newInstance(values);
+            return new AllArgsConstructor<>(constructor);
         } catch (NoSuchMethodException exp) {
             //OK
         }
         try {
             Constructor constructor = aClass.getConstructor();
-            T instance = (T) constructor.newInstance();
-            for (int i = 0; i < fields.size(); i++) {
-                fields.get(i).set(instance, values[i]);
-            }
-            return instance;
-        } catch (NoSuchMethodException exp) {
+            return new NoArgsConstructor<>(constructor, fields);
+        } catch (NoSuchMethodException exp2) {
             throw new RuntimeException("Could not construct instance of type " + aClass + ", need a constructor without arguments, or a constructor with all arguments of same type and order as the fields");
         }
     }
 
     private String escape(String name) {
         return "`" + name + "`";
-    }
-
-    public <T> List<T> readObjects(Class _class) {
-        return readObjects(_class, null);
     }
 
     private String getTable(Class aClass) {
@@ -383,6 +426,15 @@ public class DatabaseService implements LifeCycleBean {
         return databaseTypeService.writeFields(1, statement, values, types);
     }
 
+    private String buildQuery(Class _class, String clause) {
+        String table = getTable(_class);
+        String query = "SELECT " + getFieldsString(_class, true) + " FROM " + escape(table);
+        if (clause != null) {
+            query += " " + clause;
+        }
+        return query;
+    }
+
     public interface DatabaseAction {
         void execute(Connection connection) throws SQLException, InvocationTargetException, NoSuchMethodException, InstantiationException, IllegalAccessException;
     }
@@ -393,6 +445,44 @@ public class DatabaseService implements LifeCycleBean {
 
     public interface ArgsSetter {
         void execute(PreparedStatement statement, int ind) throws SQLException;
+    }
+
+    private interface InitializationMethod<T> {
+        T createObject(Object[] values) throws IllegalAccessException, InvocationTargetException, InstantiationException;
+    }
+
+    private static class AllArgsConstructor<T> implements InitializationMethod<T> {
+
+        private final Constructor<T> constructor;
+
+        private AllArgsConstructor(Constructor<T> constructor) {
+            this.constructor = constructor;
+        }
+
+        @Override
+        public T createObject(Object[] values) throws IllegalAccessException, InvocationTargetException, InstantiationException {
+            return (T) constructor.newInstance(values);
+        }
+    }
+
+    private static class NoArgsConstructor<T> implements InitializationMethod<T> {
+
+        private final Constructor<T> constructor;
+        private final List<Field> fields;
+
+        private NoArgsConstructor(Constructor<T> constructor, List<Field> fields) {
+            this.constructor = constructor;
+            this.fields = fields;
+        }
+
+        @Override
+        public T createObject(Object[] values) throws IllegalAccessException, InvocationTargetException, InstantiationException {
+            T instance = (T) constructor.newInstance();
+            for (int i = 0; i < fields.size(); i++) {
+                fields.get(i).set(instance, values[i]);
+            }
+            return instance;
+        }
     }
 
 }
