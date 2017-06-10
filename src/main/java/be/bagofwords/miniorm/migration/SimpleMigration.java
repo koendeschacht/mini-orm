@@ -18,7 +18,6 @@ public class SimpleMigration implements BaseMigration {
         this.statement = statement;
     }
 
-
     @Override
     public void execute(Connection connection) throws SQLException {
         Statement statement = connection.createStatement();

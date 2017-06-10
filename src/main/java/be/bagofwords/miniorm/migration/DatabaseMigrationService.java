@@ -17,7 +17,7 @@ import static java.util.stream.Collectors.toList;
  */
 public class DatabaseMigrationService implements LifeCycleBean {
 
-    private static final String MIGRATE_DB = "migration";
+    private static final String MIGRATION_TABLE = "migration";
     private static final String INITIAL_VERSION = "00000000000";
 
     @Inject
@@ -73,32 +73,32 @@ public class DatabaseMigrationService implements LifeCycleBean {
     }
 
     private void updateVersion(String version, Connection connection) throws SQLException {
-        PreparedStatement statement = connection.prepareStatement("update " + MIGRATE_DB + " set version=?");
+        PreparedStatement statement = connection.prepareStatement("update " + MIGRATION_TABLE + " set version=?");
         statement.setString(1, version);
         statement.executeUpdate();
     }
 
     private String getVersion(Connection connection) throws SQLException {
         Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery("select version from " + MIGRATE_DB);
+        ResultSet resultSet = statement.executeQuery("select version from " + MIGRATION_TABLE);
         if (resultSet.first()) {
             return resultSet.getString(1);
         } else {
-            throw new IllegalStateException("The version table " + MIGRATE_DB + " does not contain a single row!");
+            throw new IllegalStateException("The version table " + MIGRATION_TABLE + " does not contain a single row!");
         }
     }
 
     private void ensureMigrationTablePresent(Connection connection) throws SQLException {
-        ResultSet result = connection.createStatement().executeQuery("show tables like '" + MIGRATE_DB + "';");
+        ResultSet result = connection.createStatement().executeQuery("show tables like '" + MIGRATION_TABLE + "';");
         if (!result.first()) {
             //Table does not exist yet
-            Log.i("Migration table does not exist yet, creating it...");
-            connection.createStatement().execute("create table " + MIGRATE_DB + " ( `version` varchar(30) );");
+            Log.i("Table " + MIGRATION_TABLE + " does not exist yet, creating it...");
+            connection.createStatement().execute("create table " + MIGRATION_TABLE + " ( `version` varchar(30) );");
             insertInitialVersion(connection);
         }
         //Check that the version table contains at least one row
         result.close();
-        result = connection.createStatement().executeQuery("select version from " + MIGRATE_DB + ";");
+        result = connection.createStatement().executeQuery("select version from " + MIGRATION_TABLE + ";");
         if (!result.first()) {
             insertInitialVersion(connection);
         }
@@ -106,7 +106,7 @@ public class DatabaseMigrationService implements LifeCycleBean {
     }
 
     private void insertInitialVersion(Connection connection) throws SQLException {
-        PreparedStatement statement = connection.prepareStatement("insert into " + MIGRATE_DB + " (version) values ('" + INITIAL_VERSION + "')");
+        PreparedStatement statement = connection.prepareStatement("insert into " + MIGRATION_TABLE + " (version) values ('" + INITIAL_VERSION + "')");
         statement.execute();
     }
 
