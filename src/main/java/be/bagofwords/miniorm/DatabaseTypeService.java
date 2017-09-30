@@ -85,7 +85,12 @@ public class DatabaseTypeService {
             } else if (type.equals(String.class)) {
                 value = resultSet.getString(ind);
             } else if (type.equals(Date.class)) {
-                value = new Date(resultSet.getTimestamp(ind).getTime());
+                Timestamp timestamp = resultSet.getTimestamp(ind);
+                if (timestamp == null) {
+                    value = null;
+                } else {
+                    value = new Date(timestamp.getTime());
+                }
             } else {
                 throw new RuntimeException("Unknown type " + type);
             }

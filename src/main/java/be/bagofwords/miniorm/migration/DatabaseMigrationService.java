@@ -51,7 +51,16 @@ public class DatabaseMigrationService implements LifeCycleBean {
                     }
                 }
                 if (ind == -1) {
-                    throw new IllegalStateException("Version " + version + " could not be found in the list of migrations");
+                    String errorMessage;
+                    if (migrations.size() == 0) {
+                        errorMessage = "Last recorded migration had " + version + ", but currently no migrations are found.";
+                    } else {
+                        errorMessage = "Last recorded migration had unknown " + version + ", see the logs for the current list of migrations";
+                        for (BaseMigration migration : migrations) {
+                            Log.i("\tMigration " + migration.getId() + " \"" + migration.getDescription() + "\"");
+                        }
+                    }
+                    throw new IllegalStateException(errorMessage);
                 }
             } else {
                 Log.i("Starting from zero migrations");
