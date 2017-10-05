@@ -53,9 +53,10 @@ public class DatabaseService implements LifeCycleBean {
         pool.setUser(context.getProperty("database.user"));
         pool.setPassword(context.getProperty("database.password"));
         pool.setMaxPoolSize(20);
-        pool.setMinPoolSize(5);
+        pool.setMinPoolSize(0);
         pool.setInitialPoolSize(5);
         pool.setAutoCommitOnClose(true);
+        pool.setMaxIdleTime(20_000);
     }
 
     @Override
@@ -160,10 +161,16 @@ public class DatabaseService implements LifeCycleBean {
             List<Field> fields = getFields(object.getClass(), true).collect(toList());
             Field idField = null;
             List<Field> fieldsInOrder = new ArrayList<>();
+            boolean firstField = true;
             for (Field field : fields) {
                 if (field.getName().equals("id")) {
                     idField = field;
                 } else {
+                    if (firstField) {
+                        firstField = false;
+                    } else {
+                        query += ", ";
+                    }
                     query += escape(field.getName()) + "=? ";
                     fieldsInOrder.add(field);
                 }
@@ -175,13 +182,13 @@ public class DatabaseService implements LifeCycleBean {
             query += "where id=?";
             PreparedStatement statement = connection.prepareStatement(query);
             writeObjectFields(statement, object, fieldsInOrder);
-            statement.executeBatch();
+            statement.executeUpdate();
         });
     }
 
     public Long insertObject(Object object, boolean generateId) {
         List<Long> ids = insertObjects(Collections.singletonList(object), generateId);
-        if (generateId) {
+        if (generateId && ids != null && !ids.isEmpty()) {
             return ids.get(0);
         } else {
             return null;

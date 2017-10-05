@@ -42,6 +42,8 @@ public class DatabaseTypeService {
                 statement.setString(ind, (String) value);
             } else if (type.equals(Date.class)) {
                 statement.setTimestamp(ind, new Timestamp(((Date) value).getTime()));
+            } else if (type.isEnum()) {
+                statement.setString(ind, value.toString());
             } else {
                 throw new RuntimeException("Unknown type " + type);
             }
@@ -62,6 +64,8 @@ public class DatabaseTypeService {
             return Types.VARCHAR;
         } else if (type.equals(Date.class)) {
             return Types.DATE;
+        } else if (type.isEnum()) {
+            return Types.VARCHAR;
         } else {
             throw new RuntimeException("Unknown type " + type);
         }
@@ -90,6 +94,13 @@ public class DatabaseTypeService {
                     value = null;
                 } else {
                     value = new Date(timestamp.getTime());
+                }
+            } else if (type.isEnum()) {
+                String enumValue = resultSet.getString(ind);
+                if (enumValue == null) {
+                    value = null;
+                } else {
+                    value = Enum.valueOf((Class<Enum>) type, enumValue);
                 }
             } else {
                 throw new RuntimeException("Unknown type " + type);
