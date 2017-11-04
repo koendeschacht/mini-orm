@@ -155,106 +155,141 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public void updateObjectWithId(Object object) {
-        String table = getTable(object.getClass());
         execute(connection -> {
-            String query = "update " + table + " set ";
-            List<Field> fields = getFields(object.getClass(), true).collect(toList());
-            Field idField = null;
-            List<Field> fieldsInOrder = new ArrayList<>();
-            boolean firstField = true;
-            for (Field field : fields) {
-                if (field.getName().equals("id")) {
-                    idField = field;
-                } else {
-                    if (firstField) {
-                        firstField = false;
-                    } else {
-                        query += ", ";
-                    }
-                    query += escape(field.getName()) + "=? ";
-                    fieldsInOrder.add(field);
-                }
-            }
-            if (idField == null) {
-                throw new RuntimeException("Could not find id field for object " + object);
-            }
-            fieldsInOrder.add(idField);
+            List<Field> fields = getFields(object.getClass(), false).collect(toList());
+            Field idField = getIdField(object.getClass());
+            String query = createUpdateQuery(object, fields);
             query += "where id=?";
             PreparedStatement statement = connection.prepareStatement(query);
-            writeObjectFields(statement, object, fieldsInOrder);
+            fields.add(idField);
+            writeFields(statement, object, fields);
             statement.executeUpdate();
         });
     }
 
-    public Long insertObject(Object object, boolean generateId) {
-        List<Long> ids = insertObjects(Collections.singletonList(object), generateId);
-        if (generateId && ids != null && !ids.isEmpty()) {
+    private String createUpdateQuery(Object object, List<Field> fields) {
+        String table = getTable(object.getClass());
+        String query = "update " + table + " set ";
+        boolean firstField = true;
+        for (Field field : fields) {
+            if (!field.getName().equals("id")) {
+                if (firstField) {
+                    firstField = false;
+                } else {
+                    query += ", ";
+                }
+                query += escape(field.getName()) + "=? ";
+            }
+        }
+        return query;
+    }
+
+    public void updateObject(Object object, String clause, Object... args) {
+        execute(connection -> {
+            updateObject(connection, object, clause, args);
+        });
+    }
+
+    private void updateObject(Connection connection, Object object, String clause, Object[] args) throws SQLException, IllegalAccessException {
+        List<Field> fields = getFields(object.getClass(), false).collect(toList());
+        String query = createUpdateQuery(object, fields);
+        query += clause;
+        PreparedStatement statement = connection.prepareStatement(query);
+        int ind = writeFields(statement, object, fields);
+        writeFields(statement, ind, args);
+        statement.executeUpdate();
+    }
+
+    public Long insertObject(Object object) {
+        List<Long> ids = insertObjects(Collections.singletonList(object));
+        if (ids != null && !ids.isEmpty()) {
             return ids.get(0);
         } else {
             return null;
         }
     }
 
-    public Long insertObject(Object object) {
-        return insertObject(object, true);
+    public void insertOrUpdateObject(Object object) {
+        Field idField = getIdField(object.getClass());
+        if (idField == null) {
+            throw new RuntimeException("Object " + object + " does not have an id field. To insertOrUpdate this type of objects, you need specify a clause");
+        }
+        try {
+            long value = idField.getLong(object);
+            insertOrUpdateObject(object, "WHERE id=?", value);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException("Failed to get value of the id field in " + object);
+        }
+    }
+
+    public void insertOrUpdateObject(Object object, String clause, Object... args) {
+        execute(connection -> {
+            List<?> objects = readObjects(object.getClass(), clause, args);
+            if (objects.isEmpty()) {
+                //insert
+                insertObjects(connection, Collections.singletonList(object));
+            } else if (objects.size() == 1) {
+                //update
+                updateObject(connection, object, clause, args);
+            } else {
+                //hmm that's not right
+                throw new RuntimeException("The clause \"" + clause + "\" resulted in " + objects.size() + " returned objects. Expected zero or one objects");
+            }
+        });
     }
 
     public List<Long> insertObjects(List<? extends Object> objects) {
-        return insertObjects(objects, true);
+        return execute(connection -> {
+            return insertObjects(connection, objects);
+        });
     }
 
-    public List<Long> insertObjects(List<? extends Object> objects, boolean generateId) {
+    private List<Long> insertObjects(Connection connection, List<?> objects) throws SQLException, IllegalAccessException {
         if (objects.isEmpty()) {
-            if (generateId) {
-                return Collections.emptyList();
-            } else {
-                return null;
-            }
+            return Collections.emptyList();
         }
         Class objectClass = objects.get(0).getClass();
+        Field idField = getIdField(objectClass);
+        boolean generateId = idField != null;
         for (Object object : objects) {
             if (object.getClass() != objectClass) {
                 throw new RuntimeException("Found two types of objects " + objectClass + " and " + object.getClass());
             }
         }
-        checkObjectClassHasCorrectId(objectClass);
         String table = getTable(objectClass);
-        return execute(connection -> {
-            String query = "insert into " + table;
-            List<String> fields = getFieldNames(objectClass, !generateId);
-            query += " (" + getFieldsString(fields) + ")";
-            query += " values (" + String.join(",", fields.stream().map(name -> "?").collect(toList())) + ")";
-            boolean hasId;
-            try {
-                objectClass.getField("id");
-                hasId = true;
-            } catch (NoSuchFieldException exp) {
-                hasId = false;
+        String query = "insert into " + table;
+        List<String> fields = getFieldNames(objectClass, !generateId);
+        query += " (" + getFieldsString(table, fields) + ")";
+        query += " values (" + String.join(",", fields.stream().map(name -> "?").collect(toList())) + ")";
+        if (generateId) {
+            List<Long> ids = insertWithAutoGeneratedIds(objects, connection, query);
+            assert ids.size() == objects.size();
+            for (int i = 0; i < ids.size(); i++) {
+                idField.set(objects.get(i), ids.get(i));
             }
-            if (hasId && generateId) {
-                return insertWithAutoGeneratedIds(objects, connection, query);
-            } else {
-                insertWithoutAutoGeneratedIds(objects, connection, query);
-                return null;
-            }
-        });
+            return ids;
+        } else {
+            insertWithoutAutoGeneratedIds(objects, connection, query);
+            return null;
+        }
     }
 
-    private void checkObjectClassHasCorrectId(Class objectClass) {
+    private Field getIdField(Class objectClass) {
         try {
             Field idField = objectClass.getField("id");
             if (!idField.getType().equals(Long.class) && !idField.getType().equals(long.class)) {
                 throw new RuntimeException("The id field of class " + objectClass + " is not of type Long or long");
             }
+            return idField;
         } catch (NoSuchFieldException exp) {
-            //Ok
+            return null;
         }
     }
 
     private void insertWithoutAutoGeneratedIds(List<?> objects, Connection connection, String query) throws SQLException, IllegalAccessException {
         PreparedStatement statement = connection.prepareStatement(query);
         for (int i = 0; i < objects.size(); i++) {
-            writeObjectFields(statement, objects.get(i), true);
+            writeFields(statement, objects.get(i), true);
             statement.addBatch();
             if ((i - 1) % INSERT_BATCH_SIZE == 0) {
                 statement.executeBatch();
@@ -273,7 +308,7 @@ public class DatabaseService implements LifeCycleBean {
                 allIds.addAll(ids);
                 prevEnd = i;
             }
-            writeObjectFields(statement, objects.get(i), false);
+            writeFields(statement, objects.get(i), false);
             statement.addBatch();
         }
         List<Long> ids = executeBatchAndReadIds(statement, objects, prevEnd, objects.size());
@@ -311,18 +346,38 @@ public class DatabaseService implements LifeCycleBean {
         String finalQuery = query;
         execute(connection -> {
             PreparedStatement statement = connection.prepareStatement(finalQuery);
-            databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
+            writeFields(statement, args);
             statement.execute();
             statement.close();
         });
+    }
+
+    public void writeFields(PreparedStatement statement, Object... args) throws SQLException {
+        writeFields(statement, 1, args);
+    }
+
+    public void writeFields(PreparedStatement statement, int startInd, Object... args) throws SQLException {
+        databaseTypeService.writeFields(startInd, statement, args, getTypesFromArgs(args));
+    }
+
+    public WrappedResultSet query(String query, Object... args) {
+        return execute(connection -> {
+            PreparedStatement statement = connection.prepareStatement(query);
+            writeFields(statement, args);
+            return new WrappedResultSet(query, connection, statement.executeQuery());
+        }, true);
     }
 
     public void deleteObjects(Class _class) {
         deleteObjects(_class, null);
     }
 
-    private String getFieldsString(List<String> fields) {
-        return String.join(",", fields.stream().map(this::escape).collect(toList()));
+    private String getFieldsString(String table, List<String> fields) {
+        String cleanedTable = escape(table);
+        return String.join(",", fields.stream()
+                .map(this::escape)
+                .map(f -> cleanedTable + "." + f)
+                .collect(toList()));
     }
 
     public <T> List<T> readObjects(Class<T> _class) {
@@ -330,21 +385,25 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public <T> List<T> readObjects(Class<T> _class, String clause, Object... args) {
-        String query = buildQuery(_class, clause);
         return execute(connection -> {
-            PreparedStatement statement = connection.prepareStatement(query);
-            databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
-            statement.execute();
-            List<Field> fields = getFields(_class, true).collect(toList());
-            ResultSet resultSet = statement.getResultSet();
-            List<T> result = new ArrayList<>();
-            while (resultSet.next()) {
-                noException(() -> result.add(createObject(resultSet, _class, fields)));
-            }
-            resultSet.close();
-            statement.close();
-            return result;
+            return readObjects(connection, _class, clause, args);
         });
+    }
+
+    private <T> List<T> readObjects(Connection connection, Class<T> _class, String clause, Object[] args) throws SQLException {
+        String query = buildQuery(_class, clause);
+        PreparedStatement statement = connection.prepareStatement(query);
+        writeFields(statement, args);
+        statement.execute();
+        List<Field> fields = getFields(_class, true).collect(toList());
+        ResultSet resultSet = statement.getResultSet();
+        List<T> result = new ArrayList<>();
+        while (resultSet.next()) {
+            noException(() -> result.add(createObject(resultSet, _class, fields)));
+        }
+        resultSet.close();
+        statement.close();
+        return result;
     }
 
     public <T> T readObject(Class<T> _class) {
@@ -374,7 +433,7 @@ public class DatabaseService implements LifeCycleBean {
         return execute(connection -> {
             PreparedStatement statement = connection.prepareStatement(finalQuery, java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
             statement.setFetchSize(Integer.MIN_VALUE);
-            databaseTypeService.writeFields(1, statement, args, getTypesFromArgs(args));
+            writeFields(statement, args);
             statement.execute();
             ResultSet resultSet = statement.getResultSet();
             List<Field> fields = getFields(_class, true).collect(toList());
@@ -447,8 +506,9 @@ public class DatabaseService implements LifeCycleBean {
     }
 
     public String getFieldsString(Class _class, boolean includeId) {
+        String table = getTable(_class);
         List<String> fields = getFieldNames(_class, includeId);
-        return getFieldsString(fields);
+        return getFieldsString(table, fields);
     }
 
     private List<String> getFieldNames(Class _class, boolean includeId) {
@@ -460,12 +520,12 @@ public class DatabaseService implements LifeCycleBean {
         return Arrays.stream(fields).filter(field -> !field.getName().equals("id") || includeId);
     }
 
-    public int writeObjectFields(PreparedStatement statement, Object object, boolean includeId) throws IllegalAccessException, SQLException {
+    public int writeFields(PreparedStatement statement, Object object, boolean includeId) throws IllegalAccessException, SQLException {
         List<Field> fields = getFields(object.getClass(), includeId).collect(toList());
-        return writeObjectFields(statement, object, fields);
+        return writeFields(statement, object, fields);
     }
 
-    private int writeObjectFields(PreparedStatement statement, Object object, List<Field> fields) throws IllegalAccessException, SQLException {
+    private int writeFields(PreparedStatement statement, Object object, List<Field> fields) throws IllegalAccessException, SQLException {
         Object[] values = new Object[fields.size()];
         Class[] types = new Class[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
@@ -535,4 +595,70 @@ public class DatabaseService implements LifeCycleBean {
         }
     }
 
+    public static class WrappedResultSet {
+        private final String query;
+        private final Connection connection;
+        private final ResultSet resultSet;
+
+        public WrappedResultSet(String query, Connection connection, ResultSet resultSet) {
+            this.query = query;
+            this.connection = connection;
+            this.resultSet = resultSet;
+        }
+
+        public <T> T result(ResultSetHandler<T> handler) {
+            return executeAndClose(() -> {
+                if (this.resultSet.first()) {
+                    return handler.handleResult(resultSet);
+                } else {
+                    return null;
+                }
+            });
+        }
+
+        private <T> T executeAndClose(ResultGenerator<T> o) {
+            try {
+                T result = o.generate();
+                return result;
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to execute " + query, e);
+            } finally {
+                closeConnection();
+            }
+        }
+
+        @Override
+        protected void finalize() throws Throwable {
+            closeConnection();
+            super.finalize();
+        }
+
+        private void closeConnection() {
+            try {
+                connection.close();
+            } catch (SQLException e) {
+                Log.i("Received exception while closing connection", e);
+            }
+        }
+
+        public <T> List<T> results(ResultSetHandler<T> handler) {
+            return noException(() -> {
+                List<T> results = new ArrayList<>();
+                boolean moreResults = resultSet.first();
+                while (moreResults) {
+                    results.add(handler.handleResult(resultSet));
+                    moreResults = resultSet.next();
+                }
+                return results;
+            });
+        }
+
+        public interface ResultGenerator<T> {
+            T generate() throws SQLException;
+        }
+    }
+
+    public interface ResultSetHandler<T> {
+        T handleResult(ResultSet resultSet) throws SQLException;
+    }
 }
