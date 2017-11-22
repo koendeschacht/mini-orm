@@ -110,21 +110,32 @@ public class DatabaseMigrationService implements LifeCycleBean {
 
     private void ensureMigrationTablePresent() throws SQLException {
         this.databaseService.execute(connection -> {
-            ResultSet result = connection.createStatement().executeQuery("show tables like '" + MIGRATION_TABLE + "';");
-            if (!result.first()) {
+            if (!migrationTableExists(connection)) {
                 //Table does not exist yet
-                Log.i("Table " + MIGRATION_TABLE + " does not exist yet, creating it...");
+                Log.i("Table " + MIGRATION_TABLE + " does not yet exist, creating it...");
                 connection.createStatement().execute("create table " + MIGRATION_TABLE + " ( `version` varchar(30) );");
                 insertInitialVersion(connection);
             }
             //Check that the version table contains at least one row
-            result.close();
-            result = connection.createStatement().executeQuery("select version from " + MIGRATION_TABLE + ";");
-            if (!result.first()) {
-                insertInitialVersion(connection);
+            try (ResultSet result = connection.createStatement().executeQuery("select version from " + MIGRATION_TABLE + ";")) {
+                if (!result.first()) {
+                    insertInitialVersion(connection);
+                }
             }
-            result.close();
         });
+    }
+
+    private boolean migrationTableExists(Connection connection) throws SQLException {
+        try (ResultSet resultSet = connection.createStatement().executeQuery("show tables;")) {
+            while (resultSet.next()) {
+                String tableName = resultSet.getString(1);
+                Log.i("Database contains table " + tableName);
+                if (tableName.toLowerCase().equals(MIGRATION_TABLE)) { //h2 apparently always returns the table name in capitals
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     private void insertInitialVersion(Connection connection) throws SQLException {
