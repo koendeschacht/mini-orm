@@ -44,9 +44,9 @@ public class DatabaseService implements LifeCycleBean {
         String dbName = context.getProperty("database.name");
         String dbType = context.getProperty("database.type", defaultProperties);
         String extraArgs = context.getProperty("database.extra.args", defaultProperties);
-        String jdbcUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName + "?verifyServerCertificate=false&useSSL=true";
+        String jdbcUrl = "jdbc:" + dbType + "://" + dbHost + "/" + dbName ;
         if (StringUtils.isNotEmpty(extraArgs)) {
-            jdbcUrl += "&" + extraArgs;
+            jdbcUrl += "?" + extraArgs;
         }
         Log.i("Initiating database connection " + jdbcUrl);
         pool.setJdbcUrl(jdbcUrl);
