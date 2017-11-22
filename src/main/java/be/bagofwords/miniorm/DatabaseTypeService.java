@@ -5,6 +5,8 @@ import be.bagofwords.miniorm.data.ReadField;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -42,6 +44,10 @@ public class DatabaseTypeService {
                 statement.setString(ind, (String) value);
             } else if (type.equals(Date.class)) {
                 statement.setTimestamp(ind, new Timestamp(((Date) value).getTime()));
+            } else if (type.equals(LocalDate.class)) {
+                statement.setDate(ind, java.sql.Date.valueOf((LocalDate) value));
+            } else if (type.equals(LocalDateTime.class)) {
+                statement.setTimestamp(ind, java.sql.Timestamp.valueOf((LocalDateTime) value));
             } else if (type.isEnum()) {
                 statement.setString(ind, value.toString());
             } else {
@@ -62,8 +68,10 @@ public class DatabaseTypeService {
             return Types.DOUBLE;
         } else if (type.equals(String.class)) {
             return Types.VARCHAR;
-        } else if (type.equals(Date.class)) {
+        } else if (type.equals(LocalDate.class)) {
             return Types.DATE;
+        } else if (type.equals(Date.class) || type.equals(LocalDateTime.class)) {
+            return Types.TIMESTAMP;
         } else if (type.isEnum()) {
             return Types.VARCHAR;
         } else {
@@ -94,6 +102,20 @@ public class DatabaseTypeService {
                     value = null;
                 } else {
                     value = new Date(timestamp.getTime());
+                }
+            } else if (type.equals(LocalDate.class)) {
+                java.sql.Date date = resultSet.getDate(ind);
+                if (date == null) {
+                    value = null;
+                } else {
+                    value = date.toLocalDate();
+                }
+            } else if (type.equals(LocalDateTime.class)) {
+                Timestamp timestamp = resultSet.getTimestamp(ind);
+                if (timestamp == null) {
+                    value = null;
+                } else {
+                    value = timestamp.toLocalDateTime();
                 }
             } else if (type.isEnum()) {
                 String enumValue = resultSet.getString(ind);
