@@ -41,6 +41,9 @@ public class DatabaseService implements LifeCycleBean {
         pool = new ComboPooledDataSource();
         String defaultProperties = "mini-orm.properties";
         String jdbcUrl = context.getProperty("jdbc.url", defaultProperties);
+        if (StringUtils.isEmpty(jdbcUrl)) {
+            throw new RuntimeException("Property jdbc.url was not specified");
+        }
         Log.i("Initiating database connection " + jdbcUrl);
         pool.setJdbcUrl(jdbcUrl);
         pool.setUser(context.getProperty("database.user", defaultProperties));
