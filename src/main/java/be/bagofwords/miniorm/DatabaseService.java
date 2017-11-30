@@ -40,7 +40,7 @@ public class DatabaseService implements LifeCycleBean {
     public void startBean() {
         pool = new ComboPooledDataSource();
         String defaultProperties = "mini-orm.properties";
-        String jdbcUrl = context.getProperty("jdbc.url", defaultProperties);
+        String jdbcUrl = context.getProperty("jdbc.url");
         if (StringUtils.isEmpty(jdbcUrl)) {
             throw new RuntimeException("Property jdbc.url was not specified");
         }
