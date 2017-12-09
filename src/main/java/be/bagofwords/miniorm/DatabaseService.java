@@ -5,6 +5,7 @@ import be.bagofwords.logging.Log;
 import be.bagofwords.minidepi.ApplicationContext;
 import be.bagofwords.minidepi.LifeCycleBean;
 import be.bagofwords.minidepi.annotations.Inject;
+import be.bagofwords.miniorm.data.DatabaseType;
 import be.bagofwords.miniorm.data.ReadField;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
 import org.apache.commons.lang3.StringUtils;
@@ -539,6 +540,11 @@ public class DatabaseService implements LifeCycleBean {
             query += " " + clause;
         }
         return query;
+    }
+
+    public DatabaseType getDatabaseType() {
+        String jdbcUrl = context.getProperty("jdbc.url");
+        return DatabaseType.fromJdbUrl(jdbcUrl);
     }
 
     public interface DatabaseAction {

@@ -1,5 +1,7 @@
 package be.bagofwords.miniorm.migration;
 
+import be.bagofwords.miniorm.data.DatabaseType;
+
 import java.util.List;
 
 /**
@@ -7,6 +9,6 @@ import java.util.List;
  */
 public interface MigrationCollection {
 
-    List<BaseMigration> getMigrations();
+    List<BaseMigration> getMigrations(DatabaseType databaseType);
 
 }

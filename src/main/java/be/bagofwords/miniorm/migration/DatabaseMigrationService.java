@@ -144,7 +144,7 @@ public class DatabaseMigrationService implements LifeCycleBean {
     }
 
     private List<BaseMigration> collectMigrations() {
-        return migrationCollections.stream().flatMap(collection -> collection.getMigrations().stream()).collect(toList());
+        return migrationCollections.stream().flatMap(collection -> collection.getMigrations(databaseService.getDatabaseType()).stream()).collect(toList());
     }
 
 }
