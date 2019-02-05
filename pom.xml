@@ -4,21 +4,19 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.github.koendeschacht</groupId>
-    <artifactId>mini-orm</artifactId>
-    <version>master-SNAPSHOT</version>
+    <parent>
+        <groupId>coach.stepwise</groupId>
+        <artifactId>parent</artifactId>
+        <version>master-SNAPSHOT</version>
+    </parent>
 
-    <properties>
-        <slf4j-version>1.7.24</slf4j-version>
-        <junit-version>4.12</junit-version>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
+    <artifactId>java-orm</artifactId>
+    <packaging>jar</packaging>
 
     <build>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.6.1</version>
                 <configuration>
                     <source>1.8</source>
                     <target>1.8</target>
@@ -27,17 +25,11 @@
         </plugins>
     </build>
 
-    <repositories>
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://jitpack.io</url>
-        </repository>
-    </repositories>
 
     <dependencies>
         <dependency>
-            <groupId>com.github.koendeschacht</groupId>
-            <artifactId>mini-dep-i</artifactId>
+            <groupId>coach.stepwise</groupId>
+            <artifactId>java-dependency-injection</artifactId>
             <version>master-SNAPSHOT</version>
         </dependency>
         <dependency>
@@ -54,13 +46,11 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
-            <version>${slf4j-version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>${junit-version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
